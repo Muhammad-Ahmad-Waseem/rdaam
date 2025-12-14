@@ -1,0 +1,19 @@
+# Core dependencies for r-daam
+torch>=2.0.0
+torchvision>=0.15.0
+diffusers>=0.21.0
+transformers>=4.30.0
+accelerate>=0.20.0
+safetensors>=0.3.0
+
+# Image processing
+pillow>=10.0.0
+numpy>=1.24.0
+matplotlib>=3.5.0
+
+# Utilities
+tqdm>=4.65.0
+pyyaml>=6.0
+
+# Optional: UI support (install with pip install -e .[ui])
+# gradio>=3.50.0
