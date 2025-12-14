@@ -1,15 +1,17 @@
 #!/usr/bin/env python3
 """
-Quantitative Analysis for Reverse DAAM
+Quantitative Analysis Script for Reverse DAAM
 
-Evaluates how well the model connects words to bounding boxes by:
-1. For each annotated bbox, running reverse DAAM with generation parameters
-2. Computing ratio of key_token score vs max score
-3. Averaging scores across all bbox-caption pairs
-4. Plotting distribution over caption_ids
+Evaluates the performance of the DAAM model in connecting words to bounding boxes
+by calculating attention scores for annotated image regions.
 
 Usage:
-    conda run -n cse421 python quantitative_analysis.py
+    cd /path/to/parent/directory
+    python -m rdaam.scripts.quantitative_analysis
+    
+    Or from scripts directory:
+    cd rdaam/scripts
+    python quantitative_analysis.py
 """
 
 import json
@@ -19,9 +21,9 @@ import matplotlib.pyplot as plt
 from pathlib import Path
 from tqdm import tqdm
 
-# Add parent directory to path to import reverse_daam
-sys.path.insert(0, str(Path(__file__).parent))
-from reverse_daam import run_reverse_daam
+# Add parent directory to path to import rdaam package
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+from rdaam import run_reverse_daam
 
 
 def calculate_bbox_score(token_scores, decoded_tokens_plot, key_token):
