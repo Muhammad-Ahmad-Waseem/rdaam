@@ -42,7 +42,9 @@ def run_reverse_daam(
     seed: int,
     steps: int,
     model_id: str,
-    bbox: List[int]
+    bbox: List[int],
+    pipe=None,  # Optional: pre-loaded pipeline for reuse
+    return_global_map: bool = False
 ) -> Tuple[Image.Image, List[str], npt.NDArray]:
     """
     Run Reverse DAAM analysis on a generated image.
@@ -53,6 +55,7 @@ def run_reverse_daam(
         steps: Number of inference steps
         model_id: Hugging Face model ID
         bbox: Bounding box coordinates [x_min, y_min, x_max, y_max]
+        pipe: Optional pre-loaded DiffusionPipeline for reuse (recommended for batch processing)
         
     Returns:
         Tuple containing:
@@ -63,13 +66,18 @@ def run_reverse_daam(
     logger.info(f"Starting Reverse DAAM analysis with prompt: '{prompt}'")
     logger.debug(f"Parameters: seed={seed}, steps={steps}, bbox={bbox}")
     
-    # Setup
+    # Setup device
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    logger.info(f"Using device: {device}")
     
-    logger.info(f"Loading model: {model_id}")
-    pipe = DiffusionPipeline.from_pretrained(model_id, torch_dtype=torch.float16)
-    pipe.to(device)
+    # Load pipeline only if not provided
+    if pipe is None:
+        logger.info(f"Using device: {device}")
+        logger.info(f"Loading model: {model_id}")
+        pipe = DiffusionPipeline.from_pretrained(model_id, torch_dtype=torch.float16)
+        pipe.to(device)
+    else:
+        logger.debug("Using pre-loaded pipeline")
+        device = pipe.device
     
     # Tokenize
     tokenizer = pipe.tokenizer
@@ -95,6 +103,9 @@ def run_reverse_daam(
     logger.info("Processing attention maps...")
     global_map = process_attention_maps(hook_manager.attention_maps, image.size)
 
+    if return_global_map:
+        return image, global_map, decoded_tokens
+
     # Extract bbox distribution
     logger.info("Extracting token distribution from bounding box...")
     token_scores, decoded_tokens_plot = extract_bbox_distribution(
@@ -102,6 +113,8 @@ def run_reverse_daam(
     )
     
     logger.info(f"Analysis complete. Processed {len(decoded_tokens_plot)} tokens")
+
+    
     return image, decoded_tokens_plot, token_scores
 
 

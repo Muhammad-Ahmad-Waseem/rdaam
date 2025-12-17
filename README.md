@@ -2,6 +2,8 @@
 
 A Python package for analyzing Stable Diffusion attention maps to understand word-to-region and region-to-word attributions in generated images.
 
+![Demo](assets/demo.gif)
+
 ## Quick Start
 
 ```bash

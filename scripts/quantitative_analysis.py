@@ -15,15 +15,17 @@ Usage:
 """
 
 import json
-import sys
+import logging
 import numpy as np
 import matplotlib.pyplot as plt
 from pathlib import Path
 from tqdm import tqdm
 
-# Add parent directory to path to import rdaam package
-sys.path.insert(0, str(Path(__file__).parent.parent.parent))
-from rdaam import run_reverse_daam
+# Import rdaam batch analyzer
+from rdaam.analysis.batch import ReverseDAAMBatch
+
+# Setup logger
+logger = logging.getLogger(__name__)
 
 
 def calculate_bbox_score(token_scores, decoded_tokens_plot, key_token):
@@ -57,7 +59,7 @@ def calculate_bbox_score(token_scores, decoded_tokens_plot, key_token):
                     break
     
     if not key_token_indices:
-        print(f"  Warning: key_token '{key_token}' not found in tokens: {decoded_tokens_plot}")
+        logger.warning(f"key_token '{key_token}' not found in tokens: {decoded_tokens_plot}")
         return 0.0
     
     # Get the max score for the key_token (if multiple matches)
@@ -88,13 +90,18 @@ def analyze_annotations(json_file, model_id, generation_seed, generation_steps):
     Returns:
         dict: Analysis results containing scores and statistics
     """
-    print(f"Loading annotations from {json_file}...")
+    logger.info(f"Loading annotations from {json_file}...")
     with open(json_file, 'r') as f:
         data = json.load(f)
     
     annotated_images = data['annotated_images']
-    print(f"Found {len(annotated_images)} annotated images")
-    print(f"Total annotations: {data['metadata']['total_annotations']}\n")
+    logger.info(f"Found {len(annotated_images)} annotated images")
+    logger.info(f"Total annotations: {data['metadata']['total_annotations']}")
+    
+    # Initialize batch analyzer ONCE
+    logger.info(f"Initializing batch analyzer: {model_id}")
+    analyzer = ReverseDAAMBatch(model_id=model_id)
+    logger.info("Batch analyzer ready")
     
     # Storage for results
     all_bbox_scores = []  # List of (caption_id, bbox_score) tuples
@@ -106,14 +113,25 @@ def analyze_annotations(json_file, model_id, generation_seed, generation_steps):
         caption = img_data['caption']
         annotations = img_data['annotations']
         
-        print(f"\n[{img_idx+1}/{len(annotated_images)}] Caption ID: {caption_id}")
-        print(f"Caption: {caption}")
-        print(f"Annotations: {len(annotations)}")
+        logger.info(f"[{img_idx+1}/{len(annotated_images)}] Caption ID: {caption_id}")
+        logger.debug(f"Caption: {caption}")
+        logger.debug(f"Annotations: {len(annotations)}")
+        
+        # Generate global map ONCE per caption
+        try:
+            global_map, decoded_tokens, _ = analyzer.generate_map(
+                prompt=caption,
+                seed=generation_seed,
+                steps=generation_steps
+            )
+        except Exception as e:
+            logger.error(f"Error generating map for caption {caption_id}: {e}")
+            continue
         
         # Storage for this caption's bbox scores
         caption_bbox_scores = []
         
-        # Process each bbox annotation
+        # Process each bbox annotation using the SAME global map
         for ann_idx, annotation in enumerate(annotations):
             bbox = annotation['bounding_box']
             key_token = annotation['key_token']
@@ -126,36 +144,32 @@ def analyze_annotations(json_file, model_id, generation_seed, generation_steps):
                 int(bbox['y_max'])
             ]
             
-            print(f"  BBox {ann_idx+1}/{len(annotations)}: {key_token} @ {bbox_list}")
+            logger.debug(f"BBox {ann_idx+1}/{len(annotations)}: {key_token} @ {bbox_list}")
             
-            # Run reverse DAAM
+            # Extract bbox scores from pre-generated map (FAST!)
             try:
-                _, decoded_tokens_plot, token_scores = run_reverse_daam(
-                    prompt=caption,
-                    seed=generation_seed,
-                    steps=generation_steps,
-                    model_id=model_id,
-                    bbox=bbox_list
+                token_scores, decoded_tokens_plot = analyzer.extract_bbox_scores(
+                    global_map, decoded_tokens, bbox_list
                 )
                 
                 # Calculate score for this bbox
                 bbox_score = calculate_bbox_score(token_scores, decoded_tokens_plot, key_token)
                 
-                print(f"    Score: {bbox_score:.4f}")
+                logger.debug(f"Score: {bbox_score:.4f}")
                 
                 # Store results
                 all_bbox_scores.append((caption_id, bbox_score))
                 caption_bbox_scores.append(bbox_score)
                 
             except Exception as e:
-                print(f"    Error: {e}")
+                logger.error(f"Error processing bbox: {e}")
                 continue
         
         # Store average score for this caption
         if caption_bbox_scores:
             caption_avg_score = np.mean(caption_bbox_scores)
             caption_scores[caption_id] = caption_avg_score
-            print(f"  Caption avg score: {caption_avg_score:.4f}")
+            logger.info(f"Caption avg score: {caption_avg_score:.4f}")
     
     # Compute overall statistics
     overall_scores = [score for _, score in all_bbox_scores]
@@ -218,7 +232,7 @@ def plot_results(results, output_dir='.'):
     plt.tight_layout()
     output_file = output_path / 'quantitative_analysis_results.png'
     plt.savefig(output_file, dpi=150)
-    print(f"\nSaved visualization to: {output_file}")
+    logger.info(f"Saved visualization to: {output_file}")
     
     # Save scores to JSON
     scores_data = {
@@ -233,41 +247,34 @@ def plot_results(results, output_dir='.'):
     json_output = output_path / 'quantitative_scores.json'
     with open(json_output, 'w') as f:
         json.dump(scores_data, f, indent=2)
-    print(f"Saved scores to: {json_output}")
+    logger.info(f"Saved scores to: {json_output}")
 
 
 def main():
+    # Setup logging - suppress all output including rdaam package logs
+    logging.basicConfig(
+        level=logging.CRITICAL,  # Only show critical errors
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S'
+    )
+    
+    # Suppress rdaam package logging
+    logging.getLogger('rdaam').setLevel(logging.CRITICAL)
+    logging.getLogger('rdaam.analysis').setLevel(logging.CRITICAL)
+    logging.getLogger('rdaam.analysis.reverse').setLevel(logging.CRITICAL)
+    logging.getLogger('rdaam.core').setLevel(logging.CRITICAL)
+    
     # Configuration (matching generate_coco_images.py defaults)
-    json_file = '../coco_captions_2_3_100_annotated.json'
+    json_file = 'coco_captions_2_3_100_annotated.json'
     model_id = 'CompVis/stable-diffusion-v1-4'
     generation_seed = 42
     generation_steps = 50  # From generate_coco_images.py
     
-    print("="*60)
-    print("Quantitative Analysis for Reverse DAAM")
-    print("="*60)
-    print(f"Annotated JSON: {json_file}")
-    print(f"Model: {model_id}")
-    print(f"Generation Seed: {generation_seed}")
-    print(f"Generation Steps: {generation_steps}")
-    print("="*60)
-    
-    # Run analysis
+    # Run analysis silently (only tqdm progress bar will show)
     results = analyze_annotations(json_file, model_id, generation_seed, generation_steps)
-    
-    # Print summary
-    print("\n" + "="*60)
-    print("RESULTS SUMMARY")
-    print("="*60)
-    print(f"Total BBoxes Analyzed: {results['total_bboxes']}")
-    print(f"Overall Average Score: {results['overall_avg']:.4f} ± {results['overall_std']:.4f}")
-    print(f"Number of Captions: {len(results['caption_scores'])}")
-    print("="*60)
     
     # Plot results
     plot_results(results)
-    
-    print("\nAnalysis complete!")
 
 
 if __name__ == '__main__':

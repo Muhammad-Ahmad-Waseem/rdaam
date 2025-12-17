@@ -201,16 +201,19 @@ class ReverseDAAMAnalyzer:
             tokens_plot = tokens_plot[1:-1]
             logger.debug(f"Using {len(tokens_plot)} tokens (removed start/end)")
             
-        # Create plot
-        logger.info("Creating token attribution plot...")
-        fig, ax = plt.subplots(figsize=(10, 5))
+        # Create plot using Figure directly to avoid "too many open figures" warning
+        # and global state memory leak
+        from matplotlib.figure import Figure
+        fig = Figure(figsize=(10, 5))
+        ax = fig.add_subplot(111)
+        
         ax.bar(range(len(tokens_plot)), valid_scores, color=DEFAULT_BAR_COLOR)
         ax.set_xticks(range(len(tokens_plot)))
         ax.set_xticklabels(tokens_plot, rotation=90)
         ax.set_title("Word Distribution in Selected Region")
         ax.set_xlabel("Tokens")
         ax.set_ylabel("Attention Score")
-        plt.tight_layout()
+        fig.tight_layout()
         
         logger.info("Plot created successfully")
         return fig
